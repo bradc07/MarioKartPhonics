@@ -1,0 +1,6 @@
+{
+  "installDependencies": true,
+  "startCommand": "npm run dev -- --host --port 4173",
+  "buildCommand": "npm run build",
+  "openIn": "browser"
+}
