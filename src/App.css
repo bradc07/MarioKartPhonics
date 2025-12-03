@@ -188,6 +188,103 @@ body {
   transform: translateX(-30px);
 }
 
+.kart.spinning {
+  animation: spin-360 2s ease-in-out;
+}
+
+.kart.star-mode {
+  animation: rainbow-flash 0.3s linear infinite, translateX(-30px);
+  box-shadow: 0 0 30px rgba(255, 215, 0, 1) !important;
+}
+
+.kart.boosted {
+  transform: translateX(-30px) scaleY(1.2);
+  transition: transform 0.1s ease-out;
+}
+
+@keyframes spin-360 {
+  0% {
+    transform: translateX(-30px) rotate(0deg);
+  }
+  100% {
+    transform: translateX(-30px) rotate(360deg);
+  }
+}
+
+@keyframes rainbow-flash {
+  0% {
+    filter: hue-rotate(0deg) brightness(1.3);
+  }
+  100% {
+    filter: hue-rotate(360deg) brightness(1.3);
+  }
+}
+
+/* Speed lines effect */
+.speed-lines {
+  position: absolute;
+  width: 100%;
+  height: 150%;
+  top: -25%;
+  left: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 10px,
+    rgba(255, 255, 255, 0.5) 10px,
+    rgba(255, 255, 255, 0.5) 12px
+  );
+  animation: speed-lines-move 0.2s linear infinite;
+}
+
+@keyframes speed-lines-move {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-20px);
+  }
+}
+
+/* Projectiles */
+.projectile {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  transform: translateX(-20px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.8));
+  animation: projectile-pulse 0.3s ease-in-out infinite;
+  z-index: 6;
+}
+
+@keyframes projectile-pulse {
+  0%, 100% {
+    transform: translateX(-20px) scale(1);
+  }
+  50% {
+    transform: translateX(-20px) scale(1.1);
+  }
+}
+
+/* Obstacles */
+.obstacle {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  transform: translateX(-20px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+  z-index: 4;
+}
+
 /* Finish Line */
 .finish-line {
   position: absolute;
