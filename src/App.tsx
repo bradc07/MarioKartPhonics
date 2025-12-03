@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import './App.css'
+import { PLAYER_KART_IMAGE } from './assets'
 
 type GameState = 'countdown' | 'racing' | 'finished'
 type Lane = 0 | 1 | 2
@@ -442,12 +443,21 @@ function App() {
   // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      console.log('Key pressed:', e.key, 'Game state:', gameStateRef.current, 'Modal active:', spellingQuestionRef.current.active)
+
       if (gameStateRef.current === 'racing' && !spellingQuestionRef.current.active) {
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
           e.preventDefault()
-          setPressedKeys(prev => new Set(prev).add(e.key))
+          console.log('Arrow key detected, updating pressedKeys')
+          setPressedKeys(prev => {
+            const newSet = new Set(prev)
+            newSet.add(e.key)
+            console.log('New pressed keys:', Array.from(newSet))
+            return newSet
+          })
         } else if (e.key === ' ' && heldPowerUpRef.current) {
           e.preventDefault()
+          console.log('Spacebar pressed, using power-up:', heldPowerUpRef.current)
           usePowerUp(heldPowerUpRef.current)
         }
       }
@@ -455,6 +465,7 @@ function App() {
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        console.log('Key released:', e.key)
         setPressedKeys(prev => {
           const newSet = new Set(prev)
           newSet.delete(e.key)
@@ -463,9 +474,11 @@ function App() {
       }
     }
 
+    console.log('Adding keyboard event listeners')
     window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('keyup', handleKeyUp)
     return () => {
+      console.log('Removing keyboard event listeners')
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
@@ -473,23 +486,41 @@ function App() {
 
   // Handle lane changes
   useEffect(() => {
-    if (gameState !== 'racing' || spellingQuestion.active) return
+    if (gameState !== 'racing' || spellingQuestion.active) {
+      console.log('Lane change effect skipped - gameState:', gameState, 'modal:', spellingQuestion.active)
+      return
+    }
+
+    console.log('Setting up lane change interval, pressed keys:', Array.from(pressedKeys))
 
     const interval = setInterval(() => {
       if (pressedKeys.has('ArrowLeft')) {
-        setPlayerKart(prev => ({
-          ...prev,
-          lane: Math.max(0, prev.lane - 1) as Lane,
-        }))
+        console.log('Moving left')
+        setPlayerKart(prev => {
+          const newLane = Math.max(0, prev.lane - 1) as Lane
+          console.log('Lane change:', prev.lane, '->', newLane)
+          return {
+            ...prev,
+            lane: newLane,
+          }
+        })
       } else if (pressedKeys.has('ArrowRight')) {
-        setPlayerKart(prev => ({
-          ...prev,
-          lane: Math.min(2, prev.lane + 1) as Lane,
-        }))
+        console.log('Moving right')
+        setPlayerKart(prev => {
+          const newLane = Math.min(2, prev.lane + 1) as Lane
+          console.log('Lane change:', prev.lane, '->', newLane)
+          return {
+            ...prev,
+            lane: newLane,
+          }
+        })
       }
     }, 200)
 
-    return () => clearInterval(interval)
+    return () => {
+      console.log('Clearing lane change interval')
+      clearInterval(interval)
+    }
   }, [gameState, pressedKeys, spellingQuestion.active])
 
   // Collision detection - Item boxes
@@ -785,7 +816,18 @@ function App() {
           boxShadow: kart.isPlayer ? '0 0 20px rgba(255, 255, 255, 0.8)' : 'none',
         }}
       >
-        {kart.isPlayer ? '🏎️' : ''}
+        {kart.isPlayer ? (
+          <img
+            src={PLAYER_KART_IMAGE}
+            alt="Player Kart"
+            className="kart-image"
+            onError={(e) => {
+              // Fallback to emoji if image doesn't load
+              e.currentTarget.style.display = 'none'
+              e.currentTarget.parentElement!.textContent = '🏎️'
+            }}
+          />
+        ) : ''}
         {isBoosted && !hasStar && <div className="speed-lines" />}
       </div>
     )
