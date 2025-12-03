@@ -154,6 +154,16 @@ function App() {
   const inputRef = useRef<HTMLInputElement>(null)
   const projectileIdCounter = useRef(0)
   const obstacleIdCounter = useRef(0)
+  const gameStateRef = useRef(gameState)
+  const spellingQuestionRef = useRef(spellingQuestion)
+  const heldPowerUpRef = useRef(heldPowerUp)
+
+  // Keep refs in sync
+  useEffect(() => {
+    gameStateRef.current = gameState
+    spellingQuestionRef.current = spellingQuestion
+    heldPowerUpRef.current = heldPowerUp
+  }, [gameState, spellingQuestion, heldPowerUp])
 
   // Initialize item boxes
   useEffect(() => {
@@ -432,22 +442,25 @@ function App() {
   // Keyboard controls
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (gameState === 'racing' && !spellingQuestion.active) {
+      if (gameStateRef.current === 'racing' && !spellingQuestionRef.current.active) {
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-          setPressedKeys(prev => new Set(prev).add(e.key))
-        } else if (e.key === ' ' && heldPowerUp) {
           e.preventDefault()
-          usePowerUp(heldPowerUp)
+          setPressedKeys(prev => new Set(prev).add(e.key))
+        } else if (e.key === ' ' && heldPowerUpRef.current) {
+          e.preventDefault()
+          usePowerUp(heldPowerUpRef.current)
         }
       }
     }
 
     const handleKeyUp = (e: KeyboardEvent) => {
-      setPressedKeys(prev => {
-        const newSet = new Set(prev)
-        newSet.delete(e.key)
-        return newSet
-      })
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        setPressedKeys(prev => {
+          const newSet = new Set(prev)
+          newSet.delete(e.key)
+          return newSet
+        })
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -456,7 +469,7 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [gameState, spellingQuestion.active, heldPowerUp])
+  }, [])
 
   // Handle lane changes
   useEffect(() => {
