@@ -1,3 +1,2 @@
-// Placeholder - Replace this with your actual kart image
-// Save your kart image as 'player-kart.png' in the public folder
-export const PLAYER_KART_IMAGE = '/player-kart.png'
+// Player kart image - using Vite's base URL for GitHub Pages compatibility
+export const PLAYER_KART_IMAGE = `${import.meta.env.BASE_URL}player-kart.png`
