@@ -1,1007 +1,339 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { PLAYER_KART_IMAGE } from './assets'
-
-type GameState = 'countdown' | 'racing' | 'finished'
-type Lane = 0 | 1 | 2
-type PowerUpType = 'green-shell' | 'red-shell' | 'mushroom' | 'banana' | 'star'
-
-interface Kart {
-  id: string
-  lane: Lane
-  position: number
-  speed: number
-  baseSpeed: number
-  color: string
-  isPlayer: boolean
-}
-
-interface ItemBox {
-  id: string
-  lane: Lane
-  position: number
-  collected: boolean
-}
-
-interface SpellingQuestion {
-  word: string
-  active: boolean
-}
-
-interface Projectile {
-  id: string
-  type: 'green-shell' | 'red-shell'
-  lane: Lane
-  position: number
-  speed: number
-  targetKartId?: string
-}
-
-interface Obstacle {
-  id: string
-  type: 'banana'
-  lane: Lane
-  position: number
-  timestamp: number
-}
-
-interface KartEffect {
-  spinning: boolean
-  spinEndTime: number
-  boosted: boolean
-  boostEndTime: number
-  star: boolean
-  starEndTime: number
-}
-
-const LANE_WIDTH = 120
-const LANE_OFFSET = 50
-const RACE_DURATION = 60000
-const FINISH_LINE_POSITION = 10000
-const ITEM_BOX_SPACING = 1200
-const QUESTION_TIME_LIMIT = 10000
-const PROJECTILE_SPEED = 10
-const SPIN_DURATION = 2000
-const BOOST_DURATION = 2000
-const STAR_DURATION = 4000
-const BANANA_LIFETIME = 10000
 
 const SPELLING_WORDS = [
   'because', 'friend', 'again', 'said', 'could',
   'would', 'should', 'people', 'water', 'there',
-  'their', 'they\'re', 'where', 'were', 'your',
-  'you\'re', 'many', 'any', 'busy', 'beautiful'
+  'their', "they're", 'where', 'were', 'your',
+  "you're", 'many', 'any', 'busy', 'beautiful'
 ]
+
+const QUESTION_INTERVAL = 5000
+const PLAYER_ADVANCE = 140
+const AI_ADVANCE_MIN = 90
+const AI_ADVANCE_MAX = 180
+const TRACK_LENGTH = 2000
+const VIEWPORT_HEIGHT = 640
+const LANE_WIDTH = 120
+
+interface Kart {
+  id: string
+  lane: number
+  progress: number
+  color: string
+  isPlayer: boolean
+}
+
+interface Question {
+  word: string
+  options: string[]
+  correctIndex: number
+  revealed: boolean
+}
+
+type GameState = 'countdown' | 'racing' | 'finished'
+type PowerUpType = 'green-shell' | 'red-shell' | 'mushroom' | 'banana' | 'star'
 
 const POWER_UP_ICONS: Record<PowerUpType, string> = {
   'green-shell': '🟢',
   'red-shell': '🔴',
   'mushroom': '🍄',
   'banana': '🍌',
-  'star': '⭐'
+  'star': '⭐',
 }
 
 function App() {
   const [gameState, setGameState] = useState<GameState>('countdown')
   const [countdown, setCountdown] = useState(3)
-  const [raceTime, setRaceTime] = useState(0)
-  const [trackOffset, setTrackOffset] = useState(0)
-
-  const [playerKart, setPlayerKart] = useState<Kart>({
-    id: 'player',
-    lane: 1,
-    position: 0,
-    speed: 5,
-    baseSpeed: 5,
-    color: '#FF1744',
-    isPlayer: true,
-  })
-
-  const [aiKarts, setAiKarts] = useState<Kart[]>([
-    {
-      id: 'ai1',
-      lane: 0,
-      position: 500,
-      speed: 4.5,
-      baseSpeed: 4.5,
-      color: '#2196F3',
-      isPlayer: false,
-    },
-    {
-      id: 'ai2',
-      lane: 1,
-      position: 800,
-      speed: 4.8,
-      baseSpeed: 4.8,
-      color: '#4CAF50',
-      isPlayer: false,
-    },
-    {
-      id: 'ai3',
-      lane: 2,
-      position: 1200,
-      speed: 4.3,
-      baseSpeed: 4.3,
-      color: '#FFC107',
-      isPlayer: false,
-    },
+  const [karts, setKarts] = useState<Kart[]>([
+    { id: 'player', lane: 1, progress: 0, color: '#FF1744', isPlayer: true },
+    { id: 'ai1', lane: 0, progress: 0, color: '#2196F3', isPlayer: false },
+    { id: 'ai2', lane: 2, progress: 0, color: '#4CAF50', isPlayer: false },
+    { id: 'ai3', lane: 3, progress: 0, color: '#FFC107', isPlayer: false },
   ])
-
-  const [itemBoxes, setItemBoxes] = useState<ItemBox[]>([])
-  const [spellingQuestion, setSpellingQuestion] = useState<SpellingQuestion>({
-    word: '',
-    active: false,
-  })
-  const [userAnswer, setUserAnswer] = useState('')
-  const [questionTimer, setQuestionTimer] = useState(QUESTION_TIME_LIMIT)
+  const [question, setQuestion] = useState<Question | null>(null)
+  const [selectedOption, setSelectedOption] = useState<number | null>(null)
   const [heldPowerUp, setHeldPowerUp] = useState<PowerUpType | null>(null)
-  const [feedbackMessage, setFeedbackMessage] = useState('')
-  const [frozenPosition, setFrozenPosition] = useState(0)
+  const [message, setMessage] = useState('')
 
-  const [projectiles, setProjectiles] = useState<Projectile[]>([])
-  const [obstacles, setObstacles] = useState<Obstacle[]>([])
-  const [playerEffect, setPlayerEffect] = useState<KartEffect>({
-    spinning: false,
-    spinEndTime: 0,
-    boosted: false,
-    boostEndTime: 0,
-    star: false,
-    starEndTime: 0,
-  })
-  const [aiEffects, setAiEffects] = useState<Record<string, KartEffect>>({})
-  const [aiItemUseCount, setAiItemUseCount] = useState(0)
+  const gameStateRef = useRef<GameState>('countdown')
+  const questionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const inputRef = useRef<HTMLInputElement>(null)
-  const projectileIdCounter = useRef(0)
-  const obstacleIdCounter = useRef(0)
-  const gameStateRef = useRef(gameState)
-  const spellingQuestionRef = useRef(spellingQuestion)
-  const heldPowerUpRef = useRef(heldPowerUp)
+  const playerKart = useMemo(() => karts.find(k => k.isPlayer)!, [karts])
+  const finishLineReached = karts.some(k => k.progress >= TRACK_LENGTH)
 
-  // Keep refs in sync
   useEffect(() => {
     gameStateRef.current = gameState
-    spellingQuestionRef.current = spellingQuestion
-    heldPowerUpRef.current = heldPowerUp
-  }, [gameState, spellingQuestion, heldPowerUp])
+  }, [gameState])
 
-  // Initialize item boxes
   useEffect(() => {
-    if (gameState === 'racing' && itemBoxes.length === 0) {
-      const boxes: ItemBox[] = []
-      for (let i = 0; i < 10; i++) {
-        boxes.push({
-          id: `box-${i}`,
-          lane: Math.floor(Math.random() * 3) as Lane,
-          position: 1000 + (i * ITEM_BOX_SPACING),
-          collected: false,
+    if (gameState === 'countdown') {
+      const timer = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(timer)
+            setGameState('racing')
+            return 0
+          }
+          return prev - 1
         })
-      }
-      setItemBoxes(boxes)
+      }, 1000)
+      return () => clearInterval(timer)
     }
-  }, [gameState, itemBoxes.length])
+  }, [gameState])
 
-  // Calculate positions
-  const calculatePosition = useCallback(() => {
-    const allKarts = [playerKart, ...aiKarts].sort((a, b) => b.position - a.position)
-    const playerPos = allKarts.findIndex(k => k.id === 'player') + 1
-    return playerPos
-  }, [playerKart, aiKarts])
-
-  // Speak word using Web Speech API
-  const speakWord = (word: string) => {
+  const speakWord = useCallback((word: string) => {
     if ('speechSynthesis' in window) {
+      speechSynthesis.cancel()
       const utterance = new SpeechSynthesisUtterance(word)
-      utterance.rate = 0.8
+      utterance.rate = 0.9
       utterance.pitch = 1
       speechSynthesis.speak(utterance)
     }
+  }, [])
+
+  const buildOptions = useCallback((word: string) => {
+    const variations = new Set<string>([word])
+    while (variations.size < 4) {
+      const swapIndex = Math.floor(Math.random() * word.length)
+      const chars = word.split('')
+      const swapWith = Math.floor(Math.random() * word.length)
+      ;[chars[swapIndex], chars[swapWith]] = [chars[swapWith], chars[swapIndex]]
+      const candidate = chars.join('')
+      variations.add(candidate)
+    }
+    return Array.from(variations).sort(() => Math.random() - 0.5)
+  }, [])
+
+  const spawnQuestion = useCallback(() => {
+    const word = SPELLING_WORDS[Math.floor(Math.random() * SPELLING_WORDS.length)]
+    const options = buildOptions(word)
+    const correctIndex = options.indexOf(word)
+    const newQuestion: Question = {
+      word,
+      options,
+      correctIndex,
+      revealed: false,
+    }
+    setQuestion(newQuestion)
+    setSelectedOption(null)
+    setMessage('')
+    speakWord(word)
+  }, [buildOptions, speakWord])
+
+  useEffect(() => {
+    if (gameState !== 'racing') return
+
+    spawnQuestion()
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current)
+    questionTimerRef.current = setInterval(spawnQuestion, QUESTION_INTERVAL)
+
+    return () => {
+      if (questionTimerRef.current) clearInterval(questionTimerRef.current)
+    }
+  }, [gameState, spawnQuestion])
+
+  useEffect(() => {
+    if (gameState !== 'racing') return
+
+    const aiInterval = setInterval(() => {
+      setKarts(prev =>
+        prev.map(kart => {
+          if (kart.isPlayer) return kart
+          const jump = Math.floor(Math.random() * (AI_ADVANCE_MAX - AI_ADVANCE_MIN + 1)) + AI_ADVANCE_MIN
+          return { ...kart, progress: Math.min(TRACK_LENGTH, kart.progress + jump) }
+        })
+      )
+    }, 2500)
+
+    return () => clearInterval(aiInterval)
+  }, [gameState])
+
+  useEffect(() => {
+    if (finishLineReached && gameState !== 'finished') {
+      setGameState('finished')
+      if (questionTimerRef.current) clearInterval(questionTimerRef.current)
+    }
+  }, [finishLineReached, gameState])
+
+  const movePlayerForward = (distance: number) => {
+    setKarts(prev =>
+      prev.map(kart => kart.isPlayer ? { ...kart, progress: Math.min(TRACK_LENGTH, kart.progress + distance) } : kart)
+    )
   }
 
-  // Use power-up
-  const usePowerUp = (powerUpType: PowerUpType) => {
-    const now = Date.now()
+  const drawRandomPowerUp = useCallback(() => {
+    const pool = Object.keys(POWER_UP_ICONS) as PowerUpType[]
+    const index = Math.floor(Math.random() * pool.length)
+    return pool[index]
+  }, [])
 
-    switch (powerUpType) {
-      case 'green-shell': {
-        const newProjectile: Projectile = {
-          id: `projectile-${projectileIdCounter.current++}`,
-          type: 'green-shell',
-          lane: playerKart.lane,
-          position: playerKart.position + 100,
-          speed: PROJECTILE_SPEED,
-        }
-        setProjectiles(prev => [...prev, newProjectile])
+  const applyPowerUp = (powerUp: PowerUpType) => {
+    switch (powerUp) {
+      case 'mushroom':
+      case 'star':
+        movePlayerForward(90)
+        setMessage('Boost!')
         break
-      }
-
-      case 'red-shell': {
-        const opponentsAhead = aiKarts.filter(k => k.position > playerKart.position)
-        if (opponentsAhead.length > 0) {
-          const nearest = opponentsAhead.reduce((closest, kart) =>
-            kart.position < closest.position ? kart : closest
-          )
-          const newProjectile: Projectile = {
-            id: `projectile-${projectileIdCounter.current++}`,
-            type: 'red-shell',
-            lane: playerKart.lane,
-            position: playerKart.position + 100,
-            speed: PROJECTILE_SPEED,
-            targetKartId: nearest.id,
-          }
-          setProjectiles(prev => [...prev, newProjectile])
-        }
+      case 'green-shell':
+      case 'red-shell':
+        setKarts(prev => {
+          const leader = prev.filter(k => !k.isPlayer).sort((a, b) => b.progress - a.progress)[0]
+          if (!leader) return prev
+          return prev.map(k => k.id === leader.id ? { ...k, progress: Math.max(0, k.progress - 60) } : k)
+        })
+        setMessage('Opponent slowed!')
         break
-      }
-
-      case 'mushroom': {
-        setPlayerEffect(prev => ({
-          ...prev,
-          boosted: true,
-          boostEndTime: now + BOOST_DURATION,
-        }))
-        setPlayerKart(prev => ({ ...prev, speed: prev.baseSpeed * 2 }))
+      case 'banana':
+        setMessage('Defensive banana ready!')
         break
-      }
-
-      case 'banana': {
-        const newObstacle: Obstacle = {
-          id: `obstacle-${obstacleIdCounter.current++}`,
-          type: 'banana',
-          lane: playerKart.lane,
-          position: playerKart.position - 100,
-          timestamp: now,
-        }
-        setObstacles(prev => [...prev, newObstacle])
-        break
-      }
-
-      case 'star': {
-        setPlayerEffect(prev => ({
-          ...prev,
-          star: true,
-          starEndTime: now + STAR_DURATION,
-          boosted: true,
-          boostEndTime: now + STAR_DURATION,
-        }))
-        setPlayerKart(prev => ({ ...prev, speed: prev.baseSpeed * 1.5 }))
-        break
-      }
     }
-
     setHeldPowerUp(null)
   }
 
-  // Apply spin-out effect to kart
-  const applySpinOut = (kartId: string, isPlayer: boolean) => {
-    const now = Date.now()
+  const handleAnswer = (option: string, index: number) => {
+    if (!question || selectedOption !== null) return
 
-    if (isPlayer) {
-      if (playerEffect.star) return // Immune during star
-      setPlayerEffect(prev => ({
-        ...prev,
-        spinning: true,
-        spinEndTime: now + SPIN_DURATION,
-      }))
-      setPlayerKart(prev => ({ ...prev, speed: prev.baseSpeed * 0.3 }))
+    const isCorrect = option === question.word
+    setSelectedOption(index)
+    setQuestion(prev => prev ? { ...prev, revealed: true } : prev)
+
+    if (isCorrect) {
+      movePlayerForward(PLAYER_ADVANCE)
+      setHeldPowerUp(drawRandomPowerUp())
+      setMessage('Great job! You earned a power-up!')
     } else {
-      setAiEffects(prev => ({
-        ...prev,
-        [kartId]: {
-          ...prev[kartId],
-          spinning: true,
-          spinEndTime: now + SPIN_DURATION,
-          boosted: false,
-          boostEndTime: 0,
-          star: false,
-          starEndTime: 0,
-        },
-      }))
-      setAiKarts(prev =>
-        prev.map(k => k.id === kartId ? { ...k, speed: k.baseSpeed * 0.3 } : k)
-      )
-    }
-  }
-
-  // AI item usage
-  useEffect(() => {
-    if (gameState !== 'racing' || aiItemUseCount >= 3) return
-
-    const interval = setInterval(() => {
-      if (Math.random() < 0.05) {
-        const randomAi = aiKarts[Math.floor(Math.random() * aiKarts.length)]
-        const itemType = Math.random() < 0.5 ? 'banana' : 'green-shell'
-        const now = Date.now()
-
-        if (itemType === 'banana') {
-          const newObstacle: Obstacle = {
-            id: `obstacle-${obstacleIdCounter.current++}`,
-            type: 'banana',
-            lane: randomAi.lane,
-            position: randomAi.position - 100,
-            timestamp: now,
-          }
-          setObstacles(prev => [...prev, newObstacle])
-        } else {
-          const newProjectile: Projectile = {
-            id: `projectile-${projectileIdCounter.current++}`,
-            type: 'green-shell',
-            lane: randomAi.lane,
-            position: randomAi.position - 100,
-            speed: -PROJECTILE_SPEED,
-          }
-          setProjectiles(prev => [...prev, newProjectile])
-        }
-
-        setAiItemUseCount(prev => prev + 1)
-      }
-    }, 3000)
-
-    return () => clearInterval(interval)
-  }, [gameState, aiKarts, aiItemUseCount])
-
-  // Update effects
-  useEffect(() => {
-    if (gameState !== 'racing') return
-
-    const interval = setInterval(() => {
-      const now = Date.now()
-
-      // Update player effects
-      setPlayerEffect(prev => {
-        let updated = { ...prev }
-
-        if (prev.spinning && now >= prev.spinEndTime) {
-          updated.spinning = false
-          setPlayerKart(k => ({ ...k, speed: k.baseSpeed }))
-        }
-
-        if (prev.boosted && now >= prev.boostEndTime && !prev.star) {
-          updated.boosted = false
-          setPlayerKart(k => ({ ...k, speed: k.baseSpeed }))
-        }
-
-        if (prev.star && now >= prev.starEndTime) {
-          updated.star = false
-          updated.boosted = false
-          setPlayerKart(k => ({ ...k, speed: k.baseSpeed }))
-        }
-
-        return updated
-      })
-
-      // Update AI effects
-      setAiEffects(prev => {
-        const updated = { ...prev }
-        Object.keys(updated).forEach(kartId => {
-          if (updated[kartId].spinning && now >= updated[kartId].spinEndTime) {
-            updated[kartId].spinning = false
-            setAiKarts(karts =>
-              karts.map(k => k.id === kartId ? { ...k, speed: k.baseSpeed } : k)
-            )
-          }
-        })
-        return updated
-      })
-
-      // Remove expired bananas
-      setObstacles(prev =>
-        prev.filter(o => now - o.timestamp < BANANA_LIFETIME)
-      )
-    }, 100)
-
-    return () => clearInterval(interval)
-  }, [gameState])
-
-  // Countdown timer
-  useEffect(() => {
-    if (gameState === 'countdown' && countdown > 0) {
-      const timer = setTimeout(() => {
-        setCountdown(countdown - 1)
-      }, 1000)
-      return () => clearTimeout(timer)
-    } else if (gameState === 'countdown' && countdown === 0) {
-      setTimeout(() => setGameState('racing'), 500)
-    }
-  }, [gameState, countdown])
-
-  // Race timer
-  useEffect(() => {
-    if (gameState === 'racing' && !spellingQuestion.active) {
-      const timer = setInterval(() => {
-        setRaceTime(prev => {
-          const newTime = prev + 16
-          if (newTime >= RACE_DURATION) {
-            setGameState('finished')
-            return RACE_DURATION
-          }
-          return newTime
-        })
-      }, 16)
-      return () => clearInterval(timer)
-    }
-  }, [gameState, spellingQuestion.active])
-
-  // Question timer
-  useEffect(() => {
-    if (spellingQuestion.active && questionTimer > 0) {
-      const timer = setInterval(() => {
-        setQuestionTimer(prev => {
-          const newTime = prev - 100
-          if (newTime <= 0) {
-            handleWrongAnswer()
-            return 0
-          }
-          return newTime
-        })
-      }, 100)
-      return () => clearInterval(timer)
-    }
-  }, [spellingQuestion.active, questionTimer])
-
-  // Keyboard controls - Direct lane changing
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (gameStateRef.current !== 'racing' || spellingQuestionRef.current.active) return
-
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        setPlayerKart(prev => ({
-          ...prev,
-          lane: Math.max(0, prev.lane - 1) as Lane,
-        }))
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        setPlayerKart(prev => ({
-          ...prev,
-          lane: Math.min(2, prev.lane + 1) as Lane,
-        }))
-      } else if (e.key === ' ' && heldPowerUpRef.current) {
-        e.preventDefault()
-        usePowerUp(heldPowerUpRef.current)
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown, { passive: false })
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [])
-
-
-  // Collision detection - Item boxes
-  useEffect(() => {
-    if (gameState !== 'racing' || spellingQuestion.active) return
-
-    itemBoxes.forEach(box => {
-      if (box.collected) return
-
-      const distance = Math.abs(box.position - playerKart.position)
-      const sameLane = box.lane === playerKart.lane
-
-      if (sameLane && distance < 50) {
-        setItemBoxes(prev =>
-          prev.map(b => (b.id === box.id ? { ...b, collected: true } : b))
-        )
-
-        const randomWord = SPELLING_WORDS[Math.floor(Math.random() * SPELLING_WORDS.length)]
-        setFrozenPosition(playerKart.position)
-        setSpellingQuestion({ word: randomWord, active: true })
-        setUserAnswer('')
-        setQuestionTimer(QUESTION_TIME_LIMIT)
-        setFeedbackMessage('')
-
-        setTimeout(() => speakWord(randomWord), 300)
-        setTimeout(() => inputRef.current?.focus(), 400)
-      }
-    })
-  }, [gameState, playerKart, itemBoxes, spellingQuestion.active])
-
-  // Collision detection - Obstacles
-  useEffect(() => {
-    if (gameState !== 'racing') return
-
-    // Player hitting bananas
-    if (!playerEffect.star) {
-      obstacles.forEach(obstacle => {
-        const distance = Math.abs(obstacle.position - playerKart.position)
-        const sameLane = obstacle.lane === playerKart.lane
-
-        if (sameLane && distance < 50) {
-          setObstacles(prev => prev.filter(o => o.id !== obstacle.id))
-          applySpinOut('player', true)
-        }
-      })
-    }
-
-    // AI hitting bananas
-    aiKarts.forEach(kart => {
-      obstacles.forEach(obstacle => {
-        const distance = Math.abs(obstacle.position - kart.position)
-        const sameLane = obstacle.lane === kart.lane
-
-        if (sameLane && distance < 50) {
-          setObstacles(prev => prev.filter(o => o.id !== obstacle.id))
-          applySpinOut(kart.id, false)
-        }
-      })
-    })
-  }, [gameState, playerKart, aiKarts, obstacles, playerEffect.star])
-
-  // Collision detection - Star mode
-  useEffect(() => {
-    if (gameState !== 'racing' || !playerEffect.star) return
-
-    aiKarts.forEach(kart => {
-      const distance = Math.abs(kart.position - playerKart.position)
-      const sameLane = kart.lane === playerKart.lane
-
-      if (sameLane && distance < 100) {
-        applySpinOut(kart.id, false)
-      }
-    })
-  }, [gameState, playerKart, aiKarts, playerEffect.star])
-
-  // Update projectiles
-  useEffect(() => {
-    if (gameState !== 'racing') return
-
-    const interval = setInterval(() => {
-      setProjectiles(prev => {
-        const updated = prev.map(proj => {
-          let newProj = { ...proj }
-
-          if (proj.type === 'red-shell' && proj.targetKartId) {
-            const target = aiKarts.find(k => k.id === proj.targetKartId)
-            if (target) {
-              if (target.lane < proj.lane) newProj.lane = Math.max(0, proj.lane - 1) as Lane
-              else if (target.lane > proj.lane) newProj.lane = Math.min(2, proj.lane + 1) as Lane
-            }
-          }
-
-          newProj.position += proj.speed
-          return newProj
-        })
-
-        return updated.filter(proj =>
-          proj.position >= -200 && proj.position <= FINISH_LINE_POSITION + 500
-        )
-      })
-    }, 16)
-
-    return () => clearInterval(interval)
-  }, [gameState, aiKarts])
-
-  // Collision detection - Projectiles
-  useEffect(() => {
-    if (gameState !== 'racing') return
-
-    // Projectiles hitting AI
-    projectiles.forEach(proj => {
-      aiKarts.forEach(kart => {
-        const distance = Math.abs(proj.position - kart.position)
-        const sameLane = proj.lane === kart.lane
-
-        if (sameLane && distance < 70) {
-          setProjectiles(prev => prev.filter(p => p.id !== proj.id))
-          applySpinOut(kart.id, false)
-        }
-      })
-
-      // Backward projectiles hitting player
-      if (proj.speed < 0) {
-        const distance = Math.abs(proj.position - playerKart.position)
-        const sameLane = proj.lane === playerKart.lane
-
-        if (sameLane && distance < 70) {
-          setProjectiles(prev => prev.filter(p => p.id !== proj.id))
-          applySpinOut('player', true)
-        }
-      }
-    })
-  }, [gameState, projectiles, aiKarts, playerKart])
-
-  // Game loop - update positions
-  useEffect(() => {
-    if (gameState !== 'racing') return
-
-    const gameLoop = setInterval(() => {
-      if (!spellingQuestion.active) {
-        setPlayerKart(prev => ({
-          ...prev,
-          position: prev.position + prev.speed,
-        }))
-      }
-
-      setAiKarts(prev =>
-        prev.map(kart => {
-          let newKart = { ...kart }
-          newKart.position += kart.speed
-
-          if (Math.random() < 0.01) {
-            const direction = Math.random() < 0.5 ? -1 : 1
-            newKart.lane = Math.max(0, Math.min(2, kart.lane + direction)) as Lane
-          }
-
-          if (Math.random() < 0.05 && !aiEffects[kart.id]?.spinning) {
-            newKart.speed = kart.baseSpeed + (Math.random() - 0.5) * 0.3
-            newKart.speed = Math.max(3.5, Math.min(5.5, newKart.speed))
-          }
-
-          return newKart
-        })
-      )
-
-      if (!spellingQuestion.active) {
-        setTrackOffset(prev => (prev + 3) % 100)
-      }
-    }, 16)
-
-    return () => clearInterval(gameLoop)
-  }, [gameState, spellingQuestion.active, aiEffects])
-
-  // Check for finish line
-  useEffect(() => {
-    if (gameState === 'racing' && !spellingQuestion.active) {
-      const allKarts = [playerKart, ...aiKarts]
-      const anyFinished = allKarts.some(k => k.position >= FINISH_LINE_POSITION)
-      if (anyFinished) {
-        setGameState('finished')
-      }
-    }
-  }, [gameState, playerKart, aiKarts, spellingQuestion.active])
-
-  const handleWrongAnswer = () => {
-    setFeedbackMessage(`Wrong - it was "${spellingQuestion.word}"`)
-    setTimeout(() => {
-      setSpellingQuestion({ word: '', active: false })
-      setFeedbackMessage('')
-    }, 2000)
-  }
-
-  const handleSubmitAnswer = () => {
-    const correct = userAnswer.trim().toLowerCase() === spellingQuestion.word.toLowerCase()
-
-    if (correct) {
-      const powerUps: PowerUpType[] = ['green-shell', 'red-shell', 'mushroom', 'banana', 'star']
-      const randomPowerUp = powerUps[Math.floor(Math.random() * powerUps.length)]
-      setHeldPowerUp(randomPowerUp)
-      setFeedbackMessage('Correct! You got a power-up!')
-
-      setTimeout(() => {
-        setSpellingQuestion({ word: '', active: false })
-        setFeedbackMessage('')
-      }, 1500)
-    } else {
-      handleWrongAnswer()
+      setMessage('Almost! Watch for the highlighted answer.')
     }
   }
 
   const resetGame = () => {
     setGameState('countdown')
     setCountdown(3)
-    setRaceTime(0)
-    setTrackOffset(0)
-    setItemBoxes([])
-    setSpellingQuestion({ word: '', active: false })
-    setHeldPowerUp(null)
-    setUserAnswer('')
-    setFeedbackMessage('')
-    setProjectiles([])
-    setObstacles([])
-    setPlayerEffect({
-      spinning: false,
-      spinEndTime: 0,
-      boosted: false,
-      boostEndTime: 0,
-      star: false,
-      starEndTime: 0,
-    })
-    setAiEffects({})
-    setAiItemUseCount(0)
-
-    setPlayerKart({
-      id: 'player',
-      lane: 1,
-      position: 0,
-      speed: 5,
-      baseSpeed: 5,
-      color: '#FF1744',
-      isPlayer: true,
-    })
-    setAiKarts([
-      {
-        id: 'ai1',
-        lane: 0,
-        position: 500,
-        speed: 4.5,
-        baseSpeed: 4.5,
-        color: '#2196F3',
-        isPlayer: false,
-      },
-      {
-        id: 'ai2',
-        lane: 1,
-        position: 800,
-        speed: 4.8,
-        baseSpeed: 4.8,
-        color: '#4CAF50',
-        isPlayer: false,
-      },
-      {
-        id: 'ai3',
-        lane: 2,
-        position: 1200,
-        speed: 4.3,
-        baseSpeed: 4.3,
-        color: '#FFC107',
-        isPlayer: false,
-      },
+    setKarts([
+      { id: 'player', lane: 1, progress: 0, color: '#FF1744', isPlayer: true },
+      { id: 'ai1', lane: 0, progress: 0, color: '#2196F3', isPlayer: false },
+      { id: 'ai2', lane: 2, progress: 0, color: '#4CAF50', isPlayer: false },
+      { id: 'ai3', lane: 3, progress: 0, color: '#FFC107', isPlayer: false },
     ])
+    setQuestion(null)
+    setSelectedOption(null)
+    setHeldPowerUp(null)
+    setMessage('')
   }
 
-  const renderKart = (kart: Kart) => {
-    const screenPosition = kart.position - (spellingQuestion.active ? frozenPosition : playerKart.position)
-    const laneX = LANE_OFFSET + kart.lane * LANE_WIDTH
+  const positionDisplay = useMemo(() => {
+    const sorted = [...karts].sort((a, b) => b.progress - a.progress)
+    const playerIndex = sorted.findIndex(k => k.isPlayer)
+    return playerIndex + 1
+  }, [karts])
 
-    if (screenPosition < -200 || screenPosition > 600) return null
-
-    const isSpinning = kart.isPlayer ? playerEffect.spinning : aiEffects[kart.id]?.spinning
-    const hasStar = kart.isPlayer && playerEffect.star
-    const isBoosted = kart.isPlayer && playerEffect.boosted
-
-    return (
-      <div
-        key={kart.id}
-        className={`kart ${isSpinning ? 'spinning' : ''} ${hasStar ? 'star-mode' : ''} ${isBoosted ? 'boosted' : ''}`}
-        style={{
-          left: `${laneX}px`,
-          bottom: `${300 - screenPosition}px`,
-          backgroundColor: kart.isPlayer ? 'transparent' : kart.color,
-          border: kart.isPlayer ? '3px solid rgba(255, 255, 255, 0.5)' : 'none',
-          boxShadow: kart.isPlayer ? '0 0 15px rgba(255, 215, 0, 0.6)' : 'none',
-        }}
-      >
-        {kart.isPlayer ? (
-          <img
-            src={PLAYER_KART_IMAGE}
-            alt="Player Kart"
-            className="kart-image"
-            onError={(e) => {
-              // Fallback to emoji if image doesn't load
-              e.currentTarget.style.display = 'none'
-              e.currentTarget.parentElement!.textContent = '🏎️'
-            }}
-          />
-        ) : ''}
-        {isBoosted && !hasStar && <div className="speed-lines" />}
-      </div>
-    )
-  }
-
-  const renderProjectile = (proj: Projectile) => {
-    const screenPosition = proj.position - (spellingQuestion.active ? frozenPosition : playerKart.position)
-    const laneX = LANE_OFFSET + proj.lane * LANE_WIDTH
-
-    if (screenPosition < -200 || screenPosition > 700) return null
-
-    return (
-      <div
-        key={proj.id}
-        className="projectile"
-        style={{
-          left: `${laneX}px`,
-          bottom: `${300 - screenPosition}px`,
-        }}
-      >
-        {proj.type === 'green-shell' ? '🟢' : '🔴'}
-      </div>
-    )
-  }
-
-  const renderObstacle = (obstacle: Obstacle) => {
-    const screenPosition = obstacle.position - (spellingQuestion.active ? frozenPosition : playerKart.position)
-    const laneX = LANE_OFFSET + obstacle.lane * LANE_WIDTH
-
-    if (screenPosition < -200 || screenPosition > 700) return null
-
-    return (
-      <div
-        key={obstacle.id}
-        className="obstacle"
-        style={{
-          left: `${laneX}px`,
-          bottom: `${300 - screenPosition}px`,
-        }}
-      >
-        🍌
-      </div>
-    )
-  }
-
-  const renderItemBox = (box: ItemBox) => {
-    if (box.collected) return null
-
-    const screenPosition = box.position - (spellingQuestion.active ? frozenPosition : playerKart.position)
-    const laneX = LANE_OFFSET + box.lane * LANE_WIDTH
-
-    if (screenPosition < -200 || screenPosition > 700) return null
-
-    return (
-      <div
-        key={box.id}
-        className="item-box"
-        style={{
-          left: `${laneX}px`,
-          bottom: `${300 - screenPosition}px`,
-        }}
-      >
-        <div className="item-box-inner">?</div>
-      </div>
-    )
-  }
-
-  const renderFinishLine = () => {
-    const screenPosition = FINISH_LINE_POSITION - (spellingQuestion.active ? frozenPosition : playerKart.position)
-
-    if (screenPosition < -50 || screenPosition > 700) return null
-
-    return (
-      <div
-        className="finish-line"
-        style={{
-          bottom: `${300 - screenPosition}px`,
-        }}
-      >
-        🏁 FINISH LINE 🏁
-      </div>
-    )
-  }
-
-  const getFinalResults = () => {
-    return [playerKart, ...aiKarts]
-      .sort((a, b) => b.position - a.position)
-      .map((kart, index) => ({
-        kart,
-        position: index + 1,
-      }))
-  }
-
-  if (gameState === 'countdown') {
-    return (
-      <div className="game-container">
-        <div className="countdown-screen">
-          <h1 className="game-title">🏁 Mario Kart Phonics 🏁</h1>
-          <div className="countdown-number">
-            {countdown > 0 ? countdown : 'GO!'}
-          </div>
-          <p className="instruction">Use ← → arrow keys to change lanes!</p>
-          <p className="instruction">Hit item boxes to answer spelling questions!</p>
-          <p className="instruction">Press SPACE to use power-ups!</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (gameState === 'finished') {
-    const results = getFinalResults()
-    const playerResult = results.find(r => r.kart.id === 'player')
-
-    return (
-      <div className="game-container">
-        <div className="results-screen">
-          <h1 className="game-title">🏁 Race Complete! 🏁</h1>
-          <div className="final-position">
-            You finished in {playerResult?.position}
-            {playerResult?.position === 1 ? 'st' :
-             playerResult?.position === 2 ? 'nd' :
-             playerResult?.position === 3 ? 'rd' : 'th'} place!
-          </div>
-          <div className="results-list">
-            <h2>Final Results:</h2>
-            {results.map((result) => (
-              <div
-                key={result.kart.id}
-                className={`result-item ${result.kart.isPlayer ? 'player-result' : ''}`}
-              >
-                <span className="position-badge">{result.position}</span>
-                <div
-                  className="result-kart"
-                  style={{ backgroundColor: result.kart.color }}
-                />
-                <span className="result-name">
-                  {result.kart.isPlayer ? 'YOU' : `Racer ${result.kart.id.slice(-1)}`}
-                </span>
-              </div>
-            ))}
-          </div>
-          <button className="play-again-btn" onClick={resetGame}>
-            Race Again!
-          </button>
-        </div>
-      </div>
-    )
-  }
+  const viewportOffset = useMemo(() => {
+    const desiredOffset = Math.max(0, playerKart.progress - VIEWPORT_HEIGHT * 0.4)
+    const maxOffset = Math.max(0, TRACK_LENGTH - VIEWPORT_HEIGHT)
+    return Math.min(desiredOffset, maxOffset)
+  }, [playerKart.progress])
 
   return (
     <div className="game-container">
-      <div className="hud">
-        <div className="position-display">
-          Position: {calculatePosition()}/{aiKarts.length + 1}
+      {gameState === 'countdown' && (
+        <div className="countdown-screen">
+          <div className="game-title">Mario Kart Phonics</div>
+          <div className="countdown-number">{countdown}</div>
+          <div className="instruction">Get ready to listen and pick the right spelling!</div>
         </div>
-        <div className="timer-display">
-          Time: {Math.floor(raceTime / 1000)}s
-        </div>
-        {heldPowerUp && (
-          <div className="item-slot">
-            <div className="item-icon">{POWER_UP_ICONS[heldPowerUp]}</div>
-            <div className="item-label">Press SPACE</div>
-          </div>
-        )}
-      </div>
+      )}
 
-      <div className="track-container">
-        <div
-          className="track"
-          style={{
-            backgroundPositionY: `${trackOffset}px`,
-          }}
-        >
-          <div className="lane-markers">
-            <div className="lane-line" style={{ left: `${LANE_OFFSET + LANE_WIDTH}px` }} />
-            <div className="lane-line" style={{ left: `${LANE_OFFSET + LANE_WIDTH * 2}px` }} />
-          </div>
-
-          {renderFinishLine()}
-          {obstacles.map(obstacle => renderObstacle(obstacle))}
-          {itemBoxes.map(box => renderItemBox(box))}
-          {projectiles.map(proj => renderProjectile(proj))}
-          {renderKart(playerKart)}
-          {aiKarts.map((kart) => renderKart(kart))}
-        </div>
-      </div>
-
-      {spellingQuestion.active && (
-        <div className="modal-overlay">
-          <div className="spelling-modal">
-            <h2 className="modal-title">Spelling Challenge!</h2>
-            <div className="timer-bar-container">
-              <div
-                className="timer-bar"
-                style={{
-                  width: `${(questionTimer / QUESTION_TIME_LIMIT) * 100}%`,
-                }}
-              />
+      {gameState !== 'countdown' && (
+        <>
+          <div className="hud">
+            <div className="position-display">Position: {positionDisplay}/4</div>
+            <div className="timer-display">
+              {gameState === 'finished' ? 'Race Finished!' : 'Answer to speed ahead!'}
             </div>
-            <div className="question-time">{Math.ceil(questionTimer / 1000)}s</div>
+            <div className="powerup-display">
+              Power-Up: {heldPowerUp ? `${POWER_UP_ICONS[heldPowerUp]} ${heldPowerUp}` : 'None'}
+              {heldPowerUp && (
+                <button className="powerup-button" onClick={() => applyPowerUp(heldPowerUp)}>
+                  Use
+                </button>
+              )}
+            </div>
+          </div>
 
-            {!feedbackMessage ? (
-              <>
-                <p className="modal-instruction">Type the word you hear:</p>
-                <button className="speak-again-btn" onClick={() => speakWord(spellingQuestion.word)}>
-                  🔊 Hear Again
+          <div className="track-container">
+            <div
+              className="track"
+              style={{ height: `${TRACK_LENGTH + 200}px`, transform: `translateY(-${viewportOffset}px)` }}
+            >
+              <div className="finish-line" style={{ bottom: `${TRACK_LENGTH}px` }}>
+                Finish
+              </div>
+
+              {[0, 1, 2, 3].map(lane => (
+                <div key={lane} className="lane" style={{ left: `${LANE_WIDTH * lane}px` }} />
+              ))}
+
+              {karts.map(kart => (
+                <div
+                  key={kart.id}
+                  className={`kart ${kart.isPlayer ? 'player' : ''}`}
+                  style={{
+                    left: `${LANE_WIDTH * kart.lane + LANE_WIDTH / 2}px`,
+                    bottom: `${kart.progress}px`,
+                  }}
+                >
+                  {kart.isPlayer ? (
+                    <img src={PLAYER_KART_IMAGE} alt="Player Kart" className="kart-image" />
+                  ) : (
+                    <div className="kart-emoji">🏎️</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="question-panel">
+            <div className="question-header">
+              <div className="question-word">Listen for the word!</div>
+              {question && (
+                <button className="replay-button" onClick={() => speakWord(question.word)}>
+                  🔊 Replay Word
                 </button>
-                <input
-                  ref={inputRef}
-                  type="text"
-                  className="spelling-input"
-                  value={userAnswer}
-                  onChange={(e) => setUserAnswer(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSubmitAnswer()}
-                  placeholder="Type your answer..."
-                  autoComplete="off"
-                />
-                <button className="submit-btn" onClick={handleSubmitAnswer}>
-                  Submit Answer
-                </button>
-              </>
-            ) : (
-              <div className={`feedback-message ${feedbackMessage.startsWith('Correct') ? 'correct' : 'wrong'}`}>
-                {feedbackMessage}
+              )}
+            </div>
+
+            {question && (
+              <div className="options-grid">
+                {question.options.map((option, idx) => {
+                  const isCorrect = idx === question.correctIndex
+                  const isSelected = idx === selectedOption
+                  const showReveal = question.revealed && isCorrect
+                  return (
+                    <button
+                      key={option + idx}
+                      className={`option-button ${isSelected ? 'selected' : ''} ${showReveal ? 'correct' : ''}`}
+                      onClick={() => handleAnswer(option, idx)}
+                      disabled={selectedOption !== null}
+                    >
+                      {option}
+                    </button>
+                  )
+                })}
               </div>
             )}
+
+            <div className="message-row">{message}</div>
           </div>
-        </div>
+
+          {gameState === 'finished' && (
+            <div className="finish-banner">
+              <div className="finish-title">Race complete!</div>
+              <button className="restart-button" onClick={resetGame}>Race Again</button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )
