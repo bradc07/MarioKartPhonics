@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { PLAYER_KART_IMAGE } from './assets'
 
@@ -83,6 +83,45 @@ function App() {
     }
   }, [gameState])
 
+  const speakWord = useCallback((word: string) => {
+    if ('speechSynthesis' in window) {
+      speechSynthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(word)
+      utterance.rate = 0.9
+      utterance.pitch = 1
+      speechSynthesis.speak(utterance)
+    }
+  }, [])
+
+  const buildOptions = useCallback((word: string) => {
+    const variations = new Set<string>([word])
+    while (variations.size < 4) {
+      const swapIndex = Math.floor(Math.random() * word.length)
+      const chars = word.split('')
+      const swapWith = Math.floor(Math.random() * word.length)
+      ;[chars[swapIndex], chars[swapWith]] = [chars[swapWith], chars[swapIndex]]
+      const candidate = chars.join('')
+      variations.add(candidate)
+    }
+    return Array.from(variations).sort(() => Math.random() - 0.5)
+  }, [])
+
+  const spawnQuestion = useCallback(() => {
+    const word = SPELLING_WORDS[Math.floor(Math.random() * SPELLING_WORDS.length)]
+    const options = buildOptions(word)
+    const correctIndex = options.indexOf(word)
+    const newQuestion: Question = {
+      word,
+      options,
+      correctIndex,
+      revealed: false,
+    }
+    setQuestion(newQuestion)
+    setSelectedOption(null)
+    setMessage('')
+    speakWord(word)
+  }, [buildOptions, speakWord])
+
   useEffect(() => {
     if (gameState !== 'racing') return
 
@@ -93,7 +132,7 @@ function App() {
     return () => {
       if (questionTimerRef.current) clearInterval(questionTimerRef.current)
     }
-  }, [gameState])
+  }, [gameState, spawnQuestion])
 
   useEffect(() => {
     if (gameState !== 'racing') return
@@ -118,50 +157,17 @@ function App() {
     }
   }, [finishLineReached, gameState])
 
-  const spawnQuestion = () => {
-    const word = SPELLING_WORDS[Math.floor(Math.random() * SPELLING_WORDS.length)]
-    const options = buildOptions(word)
-    const correctIndex = options.indexOf(word)
-    const newQuestion: Question = {
-      word,
-      options,
-      correctIndex,
-      revealed: false,
-    }
-    setQuestion(newQuestion)
-    setSelectedOption(null)
-    setMessage('')
-    speakWord(word)
-  }
-
-  const buildOptions = (word: string) => {
-    const variations = new Set<string>([word])
-    while (variations.size < 4) {
-      const swapIndex = Math.floor(Math.random() * word.length)
-      const chars = word.split('')
-      const swapWith = Math.floor(Math.random() * word.length)
-      ;[chars[swapIndex], chars[swapWith]] = [chars[swapWith], chars[swapIndex]]
-      const candidate = chars.join('')
-      variations.add(candidate)
-    }
-    return Array.from(variations).sort(() => Math.random() - 0.5)
-  }
-
-  const speakWord = (word: string) => {
-    if ('speechSynthesis' in window) {
-      speechSynthesis.cancel()
-      const utterance = new SpeechSynthesisUtterance(word)
-      utterance.rate = 0.9
-      utterance.pitch = 1
-      speechSynthesis.speak(utterance)
-    }
-  }
-
   const movePlayerForward = (distance: number) => {
     setKarts(prev =>
       prev.map(kart => kart.isPlayer ? { ...kart, progress: Math.min(TRACK_LENGTH, kart.progress + distance) } : kart)
     )
   }
+
+  const drawRandomPowerUp = useCallback(() => {
+    const pool = Object.keys(POWER_UP_ICONS) as PowerUpType[]
+    const index = Math.floor(Math.random() * pool.length)
+    return pool[index]
+  }, [])
 
   const applyPowerUp = (powerUp: PowerUpType) => {
     switch (powerUp) {
@@ -195,8 +201,7 @@ function App() {
 
     if (isCorrect) {
       movePlayerForward(PLAYER_ADVANCE)
-      const newPower = Object.keys(POWER_UP_ICONS)[Math.floor(Math.random() * 5)] as PowerUpType
-      setHeldPowerUp(newPower)
+      setHeldPowerUp(drawRandomPowerUp())
       setMessage('Great job! You earned a power-up!')
     } else {
       setMessage('Almost! Watch for the highlighted answer.')
