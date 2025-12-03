@@ -757,9 +757,9 @@ function App() {
         style={{
           left: `${laneX}px`,
           bottom: `${300 - screenPosition}px`,
-          backgroundColor: kart.color,
-          border: kart.isPlayer ? '4px solid white' : 'none',
-          boxShadow: kart.isPlayer ? '0 0 20px rgba(255, 255, 255, 0.8)' : 'none',
+          backgroundColor: kart.isPlayer ? 'transparent' : kart.color,
+          border: kart.isPlayer ? '3px solid rgba(255, 255, 255, 0.5)' : 'none',
+          boxShadow: kart.isPlayer ? '0 0 15px rgba(255, 215, 0, 0.6)' : 'none',
         }}
       >
         {kart.isPlayer ? (
