@@ -127,7 +127,6 @@ function App() {
     },
   ])
 
-  const [pressedKeys, setPressedKeys] = useState<Set<string>>(new Set())
   const [itemBoxes, setItemBoxes] = useState<ItemBox[]>([])
   const [spellingQuestion, setSpellingQuestion] = useState<SpellingQuestion>({
     word: '',
@@ -440,88 +439,35 @@ function App() {
     }
   }, [spellingQuestion.active, questionTimer])
 
-  // Keyboard controls
+  // Keyboard controls - Direct lane changing
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      console.log('Key pressed:', e.key, 'Game state:', gameStateRef.current, 'Modal active:', spellingQuestionRef.current.active)
+      if (gameStateRef.current !== 'racing' || spellingQuestionRef.current.active) return
 
-      if (gameStateRef.current === 'racing' && !spellingQuestionRef.current.active) {
-        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-          e.preventDefault()
-          console.log('Arrow key detected, updating pressedKeys')
-          setPressedKeys(prev => {
-            const newSet = new Set(prev)
-            newSet.add(e.key)
-            console.log('New pressed keys:', Array.from(newSet))
-            return newSet
-          })
-        } else if (e.key === ' ' && heldPowerUpRef.current) {
-          e.preventDefault()
-          console.log('Spacebar pressed, using power-up:', heldPowerUpRef.current)
-          usePowerUp(heldPowerUpRef.current)
-        }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        setPlayerKart(prev => ({
+          ...prev,
+          lane: Math.max(0, prev.lane - 1) as Lane,
+        }))
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        setPlayerKart(prev => ({
+          ...prev,
+          lane: Math.min(2, prev.lane + 1) as Lane,
+        }))
+      } else if (e.key === ' ' && heldPowerUpRef.current) {
+        e.preventDefault()
+        usePowerUp(heldPowerUpRef.current)
       }
     }
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        console.log('Key released:', e.key)
-        setPressedKeys(prev => {
-          const newSet = new Set(prev)
-          newSet.delete(e.key)
-          return newSet
-        })
-      }
-    }
-
-    console.log('Adding keyboard event listeners')
-    window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('keydown', handleKeyDown, { passive: false })
     return () => {
-      console.log('Removing keyboard event listeners')
       window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
     }
   }, [])
 
-  // Handle lane changes
-  useEffect(() => {
-    if (gameState !== 'racing' || spellingQuestion.active) {
-      console.log('Lane change effect skipped - gameState:', gameState, 'modal:', spellingQuestion.active)
-      return
-    }
-
-    console.log('Setting up lane change interval, pressed keys:', Array.from(pressedKeys))
-
-    const interval = setInterval(() => {
-      if (pressedKeys.has('ArrowLeft')) {
-        console.log('Moving left')
-        setPlayerKart(prev => {
-          const newLane = Math.max(0, prev.lane - 1) as Lane
-          console.log('Lane change:', prev.lane, '->', newLane)
-          return {
-            ...prev,
-            lane: newLane,
-          }
-        })
-      } else if (pressedKeys.has('ArrowRight')) {
-        console.log('Moving right')
-        setPlayerKart(prev => {
-          const newLane = Math.min(2, prev.lane + 1) as Lane
-          console.log('Lane change:', prev.lane, '->', newLane)
-          return {
-            ...prev,
-            lane: newLane,
-          }
-        })
-      }
-    }, 200)
-
-    return () => {
-      console.log('Clearing lane change interval')
-      clearInterval(interval)
-    }
-  }, [gameState, pressedKeys, spellingQuestion.active])
 
   // Collision detection - Item boxes
   useEffect(() => {
